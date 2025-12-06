@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-socketio
+sqlmodel
+asyncpg
+redis
+rq
+python-jose[cryptography]
+passlib[bcrypt]
+multipart
+aiosqlite
+
