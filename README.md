@@ -177,7 +177,7 @@ Ensure you have installed:
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/CafeOS.git
+git clone https://github.com/Nonx2360/CafeOS.git
 cd CafeOS
 ```
 
