@@ -45,6 +45,8 @@ The ordering interface is designed for simplicity. Customers can:
 - Apply promotional codes before checkout
 - Link their phone number to earn loyalty points
 - Track their order status in real-time without refreshing
+- **Search and filter menu items** with quick category navigation
+- **Place multiple orders** on the same QR session
 
 ### Kitchen Display System
 
@@ -56,6 +58,10 @@ The kitchen view provides staff with:
 - Order age indicators to identify delays
 - Customer name and table number for each order
 - Full modifier and instruction details for accurate preparation
+- **Fullscreen mode** for dedicated kitchen screens
+- **Audio notifications** for new incoming orders
+- **Time elapsed warnings** (red highlight for orders over 10 minutes)
+- **Large, touch-friendly action buttons**
 
 ### Admin Dashboard
 
@@ -82,7 +88,11 @@ The management interface includes:
 
 **Table Management**
 - Configure table numbers and seating capacity
-- Generate QR codes for each table
+- Generate unique session tokens for each table
+- Generate printable QR codes with cafe branding
+- **Session-based ordering**: All orders from one QR session are grouped together
+- **Close session at checkout**: Shows total bill and invalidates QR code
+- **Print QR cards**: Professional QR cards with cafe name and table number
 - Monitor table status (available, occupied, needs cleaning)
 
 **Staff Management**
@@ -120,25 +130,56 @@ The management interface includes:
 ### System Design
 
 ```
-┌─────────────┐     WebSocket      ┌─────────────┐
-│   Customer  │◄──────────────────►│             │
-│   Tablet    │                    │             │
-└─────────────┘                    │             │
-                                   │   FastAPI   │
-┌─────────────┐     WebSocket      │   Backend   │
-│   Kitchen   │◄──────────────────►│             │
-│   Display   │                    │             │
-└─────────────┘                    │             │
-                                   │             │
-┌─────────────┐     REST API       │             │
-│   Admin     │◄──────────────────►│             │
-│   Panel     │                    └──────┬──────┘
-└─────────────┘                           │
-                                          │
-                                   ┌──────▼──────┐
-                                   │   SQLite    │
-                                   │   Database  │
-                                   └─────────────┘
+                                    ┌─────────────────┐
+                                    │  Table QR Code  │
+                                    │  with Session   │
+                                    └────────┬────────┘
+                                             │ Scan
+                                             ▼
+┌─────────────┐     WebSocket      ┌─────────────────┐
+│   Customer  │◄──────────────────►│                 │
+│   Tablet    │   (order status)   │                 │
+└─────────────┘                    │                 │
+       │                           │    FastAPI      │
+       │ POST /orders              │    Backend      │
+       │ (with session_token)      │                 │
+       └──────────────────────────►│                 │
+                                   │                 │
+┌─────────────┐     WebSocket      │                 │
+│   Kitchen   │◄──────────────────►│                 │
+│   Display   │   (new orders)     │                 │
+└─────────────┘                    │                 │
+                                   │                 │
+┌─────────────┐     REST API       │                 │
+│   Admin     │◄──────────────────►│                 │
+│   Panel     │  (generate/close   └────────┬────────┘
+└─────────────┘     sessions)               │
+       │                                    │
+       │ Print QR                    ┌──────▼──────┐
+       ▼                             │   SQLite    │
+ 🖨️ Printer                         │   Database  │
+                                     └─────────────┘
+```
+
+### Session Flow
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     TABLE SESSION LIFECYCLE                   │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. GENERATE          2. ORDER             3. CLOSE          │
+│  ┌─────────┐         ┌─────────┐         ┌─────────┐        │
+│  │  Admin  │         │Customer │         │  Admin  │        │
+│  │generates│────────►│ orders  │────────►│ closes  │        │
+│  │ session │         │multiple │         │ session │        │
+│  └─────────┘         │  times  │         └─────────┘        │
+│       │              └─────────┘              │              │
+│       ▼                   │                   ▼              │
+│  QR Code Active      Orders linked      Combined Bill        │
+│  URL: ?session=xyz   to session_id      QR Invalidated       │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Technology Choices
@@ -274,16 +315,19 @@ To allow tablets on the same network to access the system:
 
 ### Customer Ordering Flow
 
-1. Customer scans QR code at their table (or selects table manually)
-2. Browse menu categories and tap items to add to cart
-3. For items with options, a modal appears to select size/modifiers
-4. Enter special instructions if needed
-5. Review cart in the bottom bar
-6. Optionally enter phone number for loyalty points
-7. Optionally enter promo code and tap "Apply"
-8. Tap "Place Order" to submit
-9. Order status screen appears with real-time updates
-10. When order shows "Ready", customer picks up from counter
+1. Staff generates a session token for the table (Admin > Table Management > Generate)
+2. Customer scans QR code at their table
+3. Browse menu categories and tap items to add to cart
+4. For items with options, a modal appears to select size/modifiers
+5. Enter special instructions if needed
+6. Review cart in the bottom bar
+7. Optionally enter phone number for loyalty points
+8. Optionally enter promo code and tap "Apply"
+9. Tap "Place Order" to submit
+10. Order status screen appears with real-time updates
+11. Customer can place additional orders using the same QR code
+12. When ready to leave, staff closes the session (shows combined bill)
+13. QR code becomes invalid; staff generates new session for next customer
 
 ### Kitchen Staff Workflow
 
@@ -381,7 +425,7 @@ To allow tablets on the same network to access the system:
 - id, name, description, price_cents, category, image_url, is_available
 
 **orders**
-- id, order_number, table_id, customer_name, status, total_cents, created_at
+- id, order_number, table_id, session_id, customer_name, status, total_cents, created_at
 
 **order_items**
 - id, order_id, menu_item_id, quantity, unit_price_cents, modifier_price_cents, instructions
@@ -409,6 +453,9 @@ To allow tablets on the same network to access the system:
 
 **tables**
 - id, number, capacity, status
+
+**table_sessions**
+- id, table_id, session_token, is_active, created_at, used_at
 
 **modifier_groups**
 - id, name, selection_type, is_required
